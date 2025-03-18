@@ -15,7 +15,7 @@ def extract_text_from_pdf(pdf_path):
 def normalize_text(text):
     """Normalize text by converting 'ñ' to 'n' and handling other special characters."""
     # Replace ñ with n as per requirements
-    text = text.replace('ñ', 'n')
+    text = text.replace('Ñ', 'N')
     # Convert to lowercase for case-insensitive matching
     text = text.lower()
     return text
