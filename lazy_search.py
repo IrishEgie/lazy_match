@@ -3,6 +3,7 @@ import os
 import re
 from PyPDF2 import PdfReader
 import pathlib
+from fuzzywuzzy import fuzz  # For fuzzy matching
 
 def extract_text_from_pdf(pdf_path):
     """Extract all text from a PDF file."""
@@ -13,32 +14,61 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 def normalize_text(text):
-    """Normalize text by converting 'ñ' to 'n' and handling other special characters."""
-    # Replace ñ with n as per requirements
+    """Normalize text by converting 'Ñ' to 'N' and handling other special characters."""
+    # Replace Ñ with N as per requirements
     text = text.replace('Ñ', 'N')
     # Convert to lowercase for case-insensitive matching
     text = text.lower()
     return text
 
-def character_by_character_search(name, text):
+def exact_match(name, text):
+    """Perform exact matching between the name and text."""
+    normalized_name = normalize_text(name.strip())
+    normalized_text = normalize_text(text)
+    return normalized_name in normalized_text
+
+def fuzzy_match(name, text, threshold=70):
     """
-    Search for a name in text character by character.
-    Returns True if the exact name is found, False otherwise.
+    Perform fuzzy matching between the name and text.
+    Returns True if the match score is above the threshold.
+    """
+    normalized_name = normalize_text(name.strip())
+    normalized_text = normalize_text(text)
+    match_score = fuzz.partial_ratio(normalized_name, normalized_text)
+    return match_score >= threshold, match_score
+
+def find_leftmost_number(text, name, search_range=100):
+    """
+    Find the leftmost number in the row where the name is found.
     """
     normalized_name = normalize_text(name.strip())
     normalized_text = normalize_text(text)
     
-    # Ensure we're looking for complete words/names
-    pattern = r'\b' + re.escape(normalized_name) + r'\b'
-    matches = re.finditer(pattern, normalized_text)
+    # Find the position of the name in the text
+    name_pos = normalized_text.find(normalized_name)
+    if name_pos == -1:
+        return None
     
-    # Check if we have any matches
-    match_positions = [m.start() for m in matches]
-    return len(match_positions) > 0, match_positions
+    # Find the start of the line containing the name
+    line_start = normalized_text.rfind('\n', 0, name_pos) + 1
+    # Find the end of the line containing the name
+    line_end = normalized_text.find('\n', name_pos)
+    if line_end == -1:
+        line_end = len(normalized_text)
+    
+    # Extract the line containing the name
+    line = normalized_text[line_start:line_end]
+    
+    # Look for the leftmost number in the line
+    number_match = re.search(r'^\s*(\d+)\s*', line)
+    if number_match:
+        return int(number_match.group(1))
+    
+    return None
 
 def find_matches_in_pdfs(names, directory="."):
     """
-    Search for each name in all PDF files in the directory using character-by-character matching.
+    Search for each name in all PDF files in the directory using exact and fuzzy matching.
     Returns a dictionary mapping names to their corresponding numbers.
     """
     name_to_number = {}
@@ -60,7 +90,7 @@ def find_matches_in_pdfs(names, directory="."):
         except Exception as e:
             print(f"Error extracting text from {pdf_path}: {e}")
     
-    # For each name, perform character-by-character search in the PDFs
+    # For each name, perform exact and fuzzy search in the PDFs
     for name in names:
         if not name or pd.isna(name):
             continue
@@ -68,30 +98,24 @@ def find_matches_in_pdfs(names, directory="."):
         print(f"Searching for '{name}'...")
         
         for pdf_path, text in pdf_texts.items():
-            # Perform character-by-character search
-            found, positions = character_by_character_search(str(name), text)
-            
-            if found:
+            # Perform exact matching first
+            if exact_match(name, text):
                 print(f"Found exact match for '{name}' in {pdf_path}")
-                
-                # For each position where the name was found, look for a number after it
-                for pos in positions:
-                    # Get the text after the name match
-                    text_after_match = text[pos + len(normalize_text(str(name))):pos + len(normalize_text(str(name))) + 50]
-                    
-                    # Look for a number following the name
-                    number_match = re.search(r'\s*(\d+)', text_after_match)
-                    
-                    if number_match:
-                        # Fix the +1 issue by subtracting 1 from the found number
-                        number = int(number_match.group(1)) - 1
+                number = find_leftmost_number(text, name)
+                if number is not None:
+                    name_to_number[name] = str(number)
+                    print(f"  Associated number: {number}")
+                    break
+            else:
+                # Fall back to fuzzy matching if exact match fails
+                found, match_score = fuzzy_match(name, text)
+                if found:
+                    print(f"Found fuzzy match for '{name}' in {pdf_path} (match score: {match_score})")
+                    number = find_leftmost_number(text, name)
+                    if number is not None:
                         name_to_number[name] = str(number)
                         print(f"  Associated number: {number}")
                         break
-                
-                # If we found a match with a number for this name, we can stop searching
-                if name in name_to_number:
-                    break
         
         if name not in name_to_number:
             print(f"No match or number found for '{name}'")
